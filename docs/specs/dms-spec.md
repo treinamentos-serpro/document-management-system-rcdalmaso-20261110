@@ -2,7 +2,7 @@
 
 ## 1. Objetivo
 
-Permitir que usuários enviem, listem e baixem seus documentos, mantendo os arquivos no filesystem local da aplicação e os metadados em memória.
+Permitir que usuários enviem, listem e baixem seus documentos, mantendo os arquivos no filesystem local da aplicação e os metadados em memória. 
 
 ## 2. Escopo
 
