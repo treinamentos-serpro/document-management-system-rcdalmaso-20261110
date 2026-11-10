@@ -1,32 +1,72 @@
-// Seed do servidor backend do Document Management System.
-//
-// Este arquivo é apenas um ponto de partida mínimo. Ao longo do workshop você
-// vai usar o Agent Mode do GitHub Copilot para construir as camadas:
-//   - routes/       (definição das rotas)
-//   - controllers/  (entrada HTTP e validação)
-//   - services/     (regras de negócio)
-//   - repositories/ (persistência: arquivos locais + metadados em memória)
-//
-// Restrição do projeto: uploads são gravados no filesystem local da aplicação
-// usando multer com diskStorage. Não utilize provedores externos.
-
 const express = require('express');
+const multer = require('multer');
+const fs = require('node:fs');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const { DocumentRepository } = require('./repositories/documentRepository');
+const { createDocumentService } = require('./services/documentService');
+const { createDocumentController } = require('./controllers/documentController');
+const { createDocumentRoutes } = require('./routes/documentRoutes');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 
-app.use(express.json());
+function createApp(options = {}) {
+  const storageDirectory = options.storageDirectory
+    || process.env.STORAGE_DIR
+    || path.resolve(__dirname, '../storage');
+  const maxUploadSizeBytes = options.maxUploadSizeBytes
+    || Number(process.env.MAX_FILE_SIZE_BYTES)
+    || DEFAULT_MAX_UPLOAD_SIZE_BYTES;
 
-// Endpoint de verificação de saúde. As demais rotas (/upload, /documents,
-// /documents/:id/download) serão implementadas durante o Passo 2.
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
+  fs.mkdirSync(storageDirectory, { recursive: true });
+
+  const repository = options.repository || new DocumentRepository(storageDirectory);
+  const service = createDocumentService(repository);
+  const controller = createDocumentController(service);
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: storageDirectory,
+      filename: (req, file, callback) => callback(null, randomUUID()),
+    }),
+    limits: { fileSize: maxUploadSizeBytes },
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.get('/health', (req, res) => res.json({ status: 'ok' }));
+  app.use('/', createDocumentRoutes(controller, upload));
+  app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+
+    if (error instanceof multer.MulterError) {
+      const tooLarge = error.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: {
+          code: tooLarge ? 'FILE_TOO_LARGE' : 'INVALID_UPLOAD',
+          message: tooLarge
+            ? 'O arquivo excede o limite permitido.'
+            : 'Não foi possível processar o arquivo enviado.',
+        },
+      });
+    }
+
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Ocorreu um erro interno.' },
+    });
+  });
+
+  return app;
+}
 
 if (require.main === module) {
+  const app = createApp();
+  const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
     console.log(`DMS backend ouvindo na porta ${PORT}`);
   });
 }
+
+const app = createApp();
+app.createApp = createApp;
 
 module.exports = app;
